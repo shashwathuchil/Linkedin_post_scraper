@@ -379,7 +379,7 @@ def run_scraper():
     logger.info("Initializing LinkedIn Content Scraper...")
     console.print(Panel.fit(
         "[bold green]LinkedIn Automated Post Lead Scraper[/bold green]\n"
-        "[white]Launching headless browser for scraping...[/white]"
+        "[white]Connecting to active Chrome browser & scraping content feeds...[/white]"
     ))
     
     # Load keywords from .env file
@@ -393,20 +393,20 @@ def run_scraper():
     
     with sync_playwright() as p:
         try:
-            msg_launch = f"Launching headless browser with persistent context..."
-            logger.info(msg_launch)
-            console.print(f"[blue]{msg_launch}[/blue]")
+            msg_conn = f"Connecting to Google Chrome at {CHROME_CDP_URL}..."
+            logger.info(msg_conn)
+            console.print(f"[blue]{msg_conn}[/blue]")
+            # Connect to running Chrome instance via CDP
+            browser = p.chromium.connect_over_cdp(CHROME_CDP_URL)
+            logger.info("Successfully connected to Chrome via CDP.")
             
-            # Launch headless browser with persistent context for login session
-            browser = p.chromium.launch_persistent_context(
-                user_data_dir=USER_DATA_DIR,
-                headless=True,
-                args=['--no-first-run'],
-                channel="chrome"
-            )
-            logger.info("Successfully launched headless browser with persistent context.")
-            
-            page = browser.pages[0] if browser.pages else browser.new_page()
+            # Check if we have contexts, use existing or create new
+            if len(browser.contexts) > 0:
+                context = browser.contexts[0]
+            else:
+                context = browser.new_context()
+                
+            page = context.new_page()
             
             # Set a high-quality user-agent just in case
             page.set_extra_http_headers({

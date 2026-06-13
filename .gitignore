@@ -55,3 +55,4 @@ pipeline.md
 # Attachments (resume PDFs)
 attachment/
 .env
+linkedin_auth.json
