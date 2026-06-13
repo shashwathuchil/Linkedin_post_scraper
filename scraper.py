@@ -1,6 +1,8 @@
 import os
 import re
 import sys
+import time
+import random
 import urllib.parse
 from datetime import datetime
 from bs4 import BeautifulSoup
@@ -418,6 +420,9 @@ def run_scraper():
             for keyword in keywords:
                 console.print(Panel(f"[bold cyan]Scraping Keyword: '{keyword}'[/bold cyan]"))
                 
+                # Add human-like delay between keyword searches
+                time.sleep(random.uniform(2, 5))
+                
                 # Encode search parameters
                 encoded_keyword = urllib.parse.quote(keyword)
                 search_url = f"https://www.linkedin.com/search/results/content/?keywords={encoded_keyword}&origin=CLUSTER_EXPANSION"
@@ -427,6 +432,8 @@ def run_scraper():
                 console.print(f"[blue]{msg_search}[/blue]")
                 try:
                     page.goto(search_url, wait_until="domcontentloaded", timeout=30000)
+                    # Add human-like delay after navigation
+                    time.sleep(random.uniform(1, 3))
                 except Exception as goto_err:
                     logger.warning(f"page.goto timeout/warning: {goto_err}")
                 
@@ -457,6 +464,10 @@ def run_scraper():
                 keyword_lead_count = 0
                 
                 for step in range(SCROLL_STEPS):
+                    # Add human-like delay between scroll steps
+                    if step > 0:
+                        time.sleep(random.uniform(1, 2))
+                    
                     # Step 1: Expand all "see more" buttons currently visible
                     try:
                         # Match '...more', '… more', 'see more', 'See more', etc., on any button, span, or anchor
