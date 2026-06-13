@@ -88,13 +88,13 @@ def update_pipeline_status(post_url: str, status: str, follow_up_count: int = 0)
         with open('pipeline.md', 'r', encoding='utf-8') as f:
             content = f.read()
         
-        # Find the post section with the matching URL (more flexible pattern)
-        pattern = rf'(- \*\*Post URL\*\*: {re.escape(post_url)}\n.*?- \*\*Status\*\*: `.*?` <!-- AUTOMATION_STATUS -->\n- \*\*Email Sent\*\*: `.*?` <!-- AUTOMATION_SENT -->)'
+        # Find the post section with the matching URL and capture the intermediate lines
+        pattern = rf'(- \*\*Post URL\*\*: {re.escape(post_url)}\n.*?\n)(- \*\*Status\*\*: `.*?` <!-- AUTOMATION_STATUS -->\n- \*\*Email Sent\*\*: `.*?` <!-- AUTOMATION_SENT -->)'
         
         if follow_up_count > 0:
-            replacement = f'- **Post URL**: {post_url}\n- **Status**: `{status}` <!-- AUTOMATION_STATUS -->\n- **Email Sent**: `Yes (Follow-up: {follow_up_count})` <!-- AUTOMATION_SENT -->'
+            replacement = r'\1' + f'- **Status**: `{status}` <!-- AUTOMATION_STATUS -->\n- **Email Sent**: `Yes (Follow-up: {follow_up_count})` <!-- AUTOMATION_SENT -->'
         else:
-            replacement = f'- **Post URL**: {post_url}\n- **Status**: `{status}` <!-- AUTOMATION_STATUS -->\n- **Email Sent**: `Yes` <!-- AUTOMATION_SENT -->'
+            replacement = r'\1' + f'- **Status**: `{status}` <!-- AUTOMATION_STATUS -->\n- **Email Sent**: `Yes` <!-- AUTOMATION_SENT -->'
         
         new_content = re.sub(pattern, replacement, content, flags=re.DOTALL)
         
