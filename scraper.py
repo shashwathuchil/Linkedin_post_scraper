@@ -24,8 +24,6 @@ CHROME_CDP_URL = "http://localhost:9222"
 PIPELINE_FILE = "pipeline.md"
 SCROLL_STEPS = 6  # Number of scrolls per keyword to load enough posts
 SCROLL_DELAY_MS = 2500  # Milliseconds to wait after each scroll
-USER_DATA_DIR = "chrome_profile"  # Directory to store browser session
-HEADLESS_MODE = True  # Set to False for headed mode (for login), True for headless (for scraping)
 
 def load_keywords_from_env() -> list:
     """Load all search keywords from .env file."""
@@ -381,7 +379,7 @@ def run_scraper():
     logger.info("Initializing LinkedIn Content Scraper...")
     console.print(Panel.fit(
         "[bold green]LinkedIn Automated Post Lead Scraper[/bold green]\n"
-        "[white]Launching browser for login, then switching to headless mode for scraping...[/white]"
+        "[white]Launching headless browser for scraping...[/white]"
     ))
     
     # Load keywords from .env file
@@ -393,224 +391,189 @@ def run_scraper():
     # Load already scraped URLs to avoid duplicating entries
     existing_urls = load_existing_urls(PIPELINE_FILE)
     
-    # Step 1: Launch headed browser for login
-    console.print(Panel.fit(
-        "[bold yellow]STEP 1: HEADED MODE FOR LOGIN[/bold yellow]\n"
-        "[white]Launching headed browser for LinkedIn login...[/white]"
-    ))
-    
     with sync_playwright() as p:
-        # Launch headed browser for login
-        browser = p.chromium.launch_persistent_context(
-            user_data_dir=USER_DATA_DIR,
-            headless=False,
-            args=['--no-first-run'],
-            channel="chrome"
-        )
-        
-        page = browser.pages[0] if browser.pages else browser.new_page()
-        
-        # Navigate to LinkedIn for login
-        console.print("[blue]Navigating to LinkedIn for login...[/blue]")
-        page.goto("https://www.linkedin.com/login")
-        
-        console.print(Panel.fit(
-            "[bold green]LOGIN REQUIRED[/bold green]\n"
-            "[white]Please log in to LinkedIn in the opened browser window.[/white]\n"
-            "[white]Press Enter in this terminal once you have logged in...[/white]"
-        ))
-        
-        # Wait for user to press Enter after login
-        input()
-        
-        # Close headed browser
-        browser.close()
-        console.print("[green]Login session saved. Closing headed browser...[/green]")
-        
-        # Step 2: Launch headless browser for scraping
-        console.print(Panel.fit(
-            "[bold yellow]STEP 2: HEADLESS MODE FOR SCRAPING[/bold yellow]\n"
-            "[white]Launching headless browser for scraping...[/white]"
-        ))
-        
-        # Launch headless browser with same profile
-        browser = p.chromium.launch_persistent_context(
-            user_data_dir=USER_DATA_DIR,
-            headless=True,
-            args=['--no-first-run'],
-            channel="chrome"
-        )
-        
-        page = browser.pages[0] if browser.pages else browser.new_page()
-        
-        # Set a high-quality user-agent just in case
-        page.set_extra_http_headers({
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        })
-        
-        # To track stats
-        total_scraped_posts = 0
-        total_new_leads_with_emails = 0
-        
-        for keyword in keywords:
-            console.print(Panel(f"[bold cyan]Scraping Keyword: '{keyword}'[/bold cyan]"))
+        try:
+            msg_launch = f"Launching headless browser with persistent context..."
+            logger.info(msg_launch)
+            console.print(f"[blue]{msg_launch}[/blue]")
             
-            # Add human-like delay between keyword searches
-            time.sleep(random.uniform(2, 5))
+            # Launch headless browser with persistent context for login session
+            browser = p.chromium.launch_persistent_context(
+                user_data_dir=USER_DATA_DIR,
+                headless=True,
+                args=['--no-first-run'],
+                channel="chrome"
+            )
+            logger.info("Successfully launched headless browser with persistent context.")
             
-            # Encode search parameters
-            encoded_keyword = urllib.parse.quote(keyword)
-            search_url = f"https://www.linkedin.com/search/results/content/?keywords={encoded_keyword}&origin=CLUSTER_EXPANSION"
+            page = browser.pages[0] if browser.pages else browser.new_page()
             
-            msg_search = f"Navigating to search URL: {search_url}"
-            logger.info(msg_search)
-            console.print(f"[blue]{msg_search}[/blue]")
-            try:
-                page.goto(search_url, wait_until="domcontentloaded", timeout=30000)
-                # Add human-like delay after navigation
-                time.sleep(random.uniform(1, 3))
-            except Exception as goto_err:
-                logger.warning(f"page.goto timeout/warning: {goto_err}")
+            # Set a high-quality user-agent just in case
+            page.set_extra_http_headers({
+                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            })
             
-            # Wait for container or check if login required
-            try:
-                # Give it a bit of time to render or redirect
-                page.wait_for_timeout(4000)
+            # To track stats
+            total_scraped_posts = 0
+            total_new_leads_with_emails = 0
+            
+            for keyword in keywords:
+                console.print(Panel(f"[bold cyan]Scraping Keyword: '{keyword}'[/bold cyan]"))
                 
-                if "login" in page.url or "checkpoint" in page.url:
-                    err_msg = f"CRITICAL: LinkedIn redirected to Login or Security Checkpoint: {page.url}"
-                    logger.error(err_msg)
-                    console.print(f"[bold red]{err_msg}[/bold red]")
-                    console.print("[bold red]Please log into LinkedIn in your opened Chrome instance first, then rerun this script![/bold red]")
-                    return
-                    
-                # Wait for search results container or feed update cards
-                page.wait_for_selector('[data-testid="lazy-column"], .reusable-search__result-container, .feed-shared-update-v2, .search-results-container', timeout=15000)
-                logger.info("Search results selector resolved successfully.")
-            except Exception as e:
-                logger.warning(f"Timeout or error waiting for search results container: {e}. Attempting scroll anyway...")
-                console.print("[yellow]Timeout waiting for search results selector. Let's try scrolling anyway...[/yellow]")
-            
-            # Scroll to load dynamic contents and click expanders
-            logger.info(f"Scrolling {SCROLL_STEPS} times to load posts for keyword: '{keyword}'")
-            console.print(f"[blue]Scrolling {SCROLL_STEPS} times to lazy-load posts and expanding truncated texts...[/blue]")
-            
-            keyword_scraped_count = 0
-            keyword_lead_count = 0
-            
-            for step in range(SCROLL_STEPS):
-                # Add human-like delay between scroll steps
-                if step > 0:
-                    time.sleep(random.uniform(1, 2))
+                # Add human-like delay between keyword searches
+                time.sleep(random.uniform(2, 5))
                 
-                # Step 1: Expand all "see more" buttons currently visible
+                # Encode search parameters
+                encoded_keyword = urllib.parse.quote(keyword)
+                search_url = f"https://www.linkedin.com/search/results/content/?keywords={encoded_keyword}&origin=CLUSTER_EXPANSION"
+                
+                msg_search = f"Navigating to search URL: {search_url}"
+                logger.info(msg_search)
+                console.print(f"[blue]{msg_search}[/blue]")
                 try:
-                    # Match '...more', '… more', 'see more', 'See more', etc., on any button, span, or anchor
-                    see_more_locator = page.locator("button, span, a").filter(has_text=re.compile(r'(?:\.\.\.|…)\s*more|see\s+more', re.I))
-                    count = see_more_locator.count()
-                    clicked = 0
-                    for idx in range(count):
-                        btn = see_more_locator.nth(idx)
-                        if btn.is_visible():
+                    page.goto(search_url, wait_until="domcontentloaded", timeout=30000)
+                    # Add human-like delay after navigation
+                    time.sleep(random.uniform(1, 3))
+                except Exception as goto_err:
+                    logger.warning(f"page.goto timeout/warning: {goto_err}")
+                
+                # Wait for container or check if login required
+                try:
+                    # Give it a bit of time to render or redirect
+                    page.wait_for_timeout(4000)
+                    
+                    if "login" in page.url or "checkpoint" in page.url:
+                        err_msg = f"CRITICAL: LinkedIn redirected to Login or Security Checkpoint: {page.url}"
+                        logger.error(err_msg)
+                        console.print(f"[bold red]{err_msg}[/bold red]")
+                        console.print("[bold red]Please log into LinkedIn in your opened Chrome instance first, then rerun this script![/bold red]")
+                        return
+                        
+                    # Wait for search results container or feed update cards
+                    page.wait_for_selector('[data-testid="lazy-column"], .reusable-search__result-container, .feed-shared-update-v2, .search-results-container', timeout=15000)
+                    logger.info("Search results selector resolved successfully.")
+                except Exception as e:
+                    logger.warning(f"Timeout or error waiting for search results container: {e}. Attempting scroll anyway...")
+                    console.print("[yellow]Timeout waiting for search results selector. Let's try scrolling anyway...[/yellow]")
+                
+                # Scroll to load dynamic contents and click expanders
+                logger.info(f"Scrolling {SCROLL_STEPS} times to load posts for keyword: '{keyword}'")
+                console.print(f"[blue]Scrolling {SCROLL_STEPS} times to lazy-load posts and expanding truncated texts...[/blue]")
+                
+                keyword_scraped_count = 0
+                keyword_lead_count = 0
+                
+                for step in range(SCROLL_STEPS):
+                    # Add human-like delay between scroll steps
+                    if step > 0:
+                        time.sleep(random.uniform(1, 2))
+                    
+                    # Step 1: Expand all "see more" buttons currently visible
+                    try:
+                        # Match '...more', '… more', 'see more', 'See more', etc., on any button, span, or anchor
+                        see_more_locator = page.locator("button, span, a").filter(has_text=re.compile(r'(?:\.\.\.|…)\s*more|see\s+more', re.I))
+                        count = see_more_locator.count()
+                        clicked = 0
+                        for idx in range(count):
+                            btn = see_more_locator.nth(idx)
+                            if btn.is_visible():
+                                try:
+                                    btn.click(timeout=1000)
+                                    clicked += 1
+                                except Exception:
+                                    pass
+                        if clicked > 0:
+                            console.print(f"  [grey62]Expanded {clicked} truncated posts on scroll step {step+1}[/grey62]")
+                    except Exception as see_more_err:
+                        logger.warning(f"Error locating/expanding see more buttons: {see_more_err}")
+                    
+                    # Step 2: Log all posts currently visible (after expansion)
+                    try:
+                        html_content = page.content()
+                        soup = BeautifulSoup(html_content, 'html.parser')
+                        
+                        # Find job posts using componentkey attribute
+                        job_posts = soup.find_all('div', attrs={'componentkey': lambda x: x and 'FeedType_FLAGSHIP_SEARCH' in str(x)})
+                        
+                        logger.info(f"Scroll step {step+1}: Found {len(job_posts)} job posts on page.")
+                        
+                        # Process each job post
+                        for job_post in job_posts:
                             try:
-                                btn.click(timeout=1000)
-                                clicked += 1
-                            except Exception:
-                                pass
-                    if clicked > 0:
-                        console.print(f"  [grey62]Expanded {clicked} truncated posts on scroll step {step+1}[/grey62]")
-                except Exception as see_more_err:
-                    logger.warning(f"Error locating/expanding see more buttons: {see_more_err}")
-                
-                # Step 2: Log all posts currently visible (after expansion)
-                try:
-                    html_content = page.content()
-                    soup = BeautifulSoup(html_content, 'html.parser')
-                    
-                    # Find job posts using componentkey attribute
-                    job_posts = soup.find_all('div', attrs={'componentkey': lambda x: x and 'FeedType_FLAGSHIP_SEARCH' in str(x)})
-                    
-                    logger.info(f"Scroll step {step+1}: Found {len(job_posts)} job posts on page.")
-                    
-                    # Process each job post
-                    for job_post in job_posts:
-                        try:
-                            # Extract job data from the job post HTML
-                            job_data = extract_job_data(job_post)
-                            if not job_data:
+                                # Extract job data from the job post HTML
+                                job_data = extract_job_data(job_post)
+                                if not job_data:
+                                    continue
+                                    
+                                # Check for duplicates
+                                if job_data.get("post_url") in existing_urls:
+                                    continue
+                                    
+                                # Standardize data extraction
+                                post_url = job_data["post_url"]
+                                emails = job_data["emails"]
+                                
+                                keyword_scraped_count += 1
+                                total_scraped_posts += 1
+                                
+                                # Append the post into pipeline.md (acts as full audit trail / log first)
+                                append_to_pipeline(job_data, keyword)
+                                existing_urls.add(post_url)  # Prevent duplicates in other sections
+                                
+                                if emails:
+                                    keyword_lead_count += 1
+                                    total_new_leads_with_emails += 1
+                                    console.print(f"  [bold green]✓ Lead Found (With Email)[/bold green] - Author: [bold]{job_data['author']}[/bold] | Emails: {emails}")
+                                else:
+                                    console.print(f"  [grey62]○ Logged Post (No Email)[/grey62] - Author: [bold]{job_data['author']}[/bold]")
+                                
+                            except Exception as e:
+                                # Log error silently and continue
                                 continue
                                 
-                            # Check for duplicates
-                            if job_data.get("post_url") in existing_urls:
-                                continue
-                                
-                            # Standardize data extraction
-                            post_url = job_data["post_url"]
-                            emails = job_data["emails"]
-                            
-                            keyword_scraped_count += 1
-                            total_scraped_posts += 1
-                            
-                            # Append the post into pipeline.md (acts as full audit trail / log first)
-                            append_to_pipeline(job_data, keyword)
-                            existing_urls.add(post_url)  # Prevent duplicates in other sections
-                            
-                            if emails:
-                                keyword_lead_count += 1
-                                total_new_leads_with_emails += 1
-                                console.print(f"  [bold green]✓ Lead Found (With Email)[/bold green] - Author: [bold]{job_data['author']}[/bold] | Emails: {emails}")
-                            else:
-                                console.print(f"  [grey62]○ Logged Post (No Email)[/grey62] - Author: [bold]{job_data['author']}[/bold]")
-                            
-                        except Exception as e:
-                            # Log error silently and continue
-                            continue
-                            
-                except Exception as parse_err:
-                    logger.warning(f"Error parsing posts on scroll step {step+1}: {parse_err}")
-                
-                # Step 3: Scroll to load more content
-                try:
-                    page.evaluate("""() => {
-                        window.scrollTo(0, document.body.scrollHeight);
-                        const el = document.getElementById('workspace') || document.querySelector('main');
-                        if (el) {
-                            el.scrollTo(0, el.scrollHeight);
-                        }
-                    }""")
-                except Exception as scroll_err:
-                    logger.warning(f"Scroll step {step+1} evaluate error (context might be reloading): {scroll_err}")
-                    page.wait_for_timeout(2000)
-                    continue
+                    except Exception as parse_err:
+                        logger.warning(f"Error parsing posts on scroll step {step+1}: {parse_err}")
                     
-                page.wait_for_timeout(SCROLL_DELAY_MS)
-        
-        msg_summary = f"Keyword '{keyword}' summary: Analyzed {keyword_scraped_count} new posts, found {keyword_lead_count} new email leads."
-        logger.info(msg_summary)
-        console.print(f"[cyan]{msg_summary}[/cyan]\n")
-    
-    # Print beautiful final report
-    msg_final = f"LinkedIn Scraper run completed. Total keywords: {len(keywords)}, Analyzed: {total_scraped_posts}, New email leads: {total_new_leads_with_emails}"
-    logger.info(msg_final)
-    
-    report_table = Table(title="LinkedIn Scraper Completion Report")
-    report_table.add_column("Metric", style="bold magenta")
-    report_table.add_column("Count", style="bold green")
-    report_table.add_row("Total Keywords Searched", str(len(keywords)))
-    report_table.add_row("Total New Posts Analyzed", str(total_scraped_posts))
-    report_table.add_row("Total New Email Leads Saved", str(total_new_leads_with_emails))
-    report_table.add_row("Output File", PIPELINE_FILE)
-    
-    console.print(Panel(report_table))
-    console.print("[bold green]✔ Scraper run completed successfully! Leads saved in pipeline.md.[/bold green]")
-    
-    browser.close()
-    
-except Exception as e:
-    logger.exception(f"Critical error during scraper run: {e}")
-    console.print(f"[bold red]CRITICAL SCRAPER ERROR: {e}[/bold red]")
-    console.print("[yellow]Please ensure Chrome is running on port 9222. Execute command:[/yellow]")
-    console.print("[bold white]/Applications/Google\\ Chrome.app/Contents/MacOS/Google\\ Chrome --remote-debugging-port=9222[/bold white]")
+                    # Step 3: Scroll to load more content
+                    try:
+                        page.evaluate("""() => {
+                            window.scrollTo(0, document.body.scrollHeight);
+                            const el = document.getElementById('workspace') || document.querySelector('main');
+                            if (el) {
+                                el.scrollTo(0, el.scrollHeight);
+                            }
+                        }""")
+                    except Exception as scroll_err:
+                        logger.warning(f"Scroll step {step+1} evaluate error (context might be reloading): {scroll_err}")
+                        page.wait_for_timeout(2000)
+                        continue
+                        
+                    page.wait_for_timeout(SCROLL_DELAY_MS)
+                
+                msg_summary = f"Keyword '{keyword}' summary: Analyzed {keyword_scraped_count} new posts, found {keyword_lead_count} new email leads."
+                logger.info(msg_summary)
+                console.print(f"[cyan]{msg_summary}[/cyan]\n")
+            
+            # Print beautiful final report
+            msg_final = f"LinkedIn Scraper run completed. Total keywords: {len(keywords)}, Analyzed: {total_scraped_posts}, New email leads: {total_new_leads_with_emails}"
+            logger.info(msg_final)
+            
+            report_table = Table(title="LinkedIn Scraper Completion Report")
+            report_table.add_column("Metric", style="bold magenta")
+            report_table.add_column("Count", style="bold green")
+            report_table.add_row("Total Keywords Searched", str(len(keywords)))
+            report_table.add_row("Total New Posts Analyzed", str(total_scraped_posts))
+            report_table.add_row("Total New Email Leads Saved", str(total_new_leads_with_emails))
+            report_table.add_row("Output File", PIPELINE_FILE)
+            
+            console.print(Panel(report_table))
+            console.print("[bold green]✔ Scraper run completed successfully! Leads saved in pipeline.md.[/bold green]")
+            
+        except Exception as e:
+            logger.exception(f"Critical error during scraper run: {e}")
+            console.print(f"[bold red]CRITICAL SCRAPER ERROR: {e}[/bold red]")
+            console.print("[yellow]Please ensure Chrome is running on port 9222. Execute command:[/yellow]")
+            console.print("[bold white]/Applications/Google\\ Chrome.app/Contents/MacOS/Google\\ Chrome --remote-debugging-port=9222[/bold white]")
 
 if __name__ == "__main__":
     run_scraper()
