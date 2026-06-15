@@ -420,8 +420,8 @@ def run_scraper():
             for keyword in keywords:
                 console.print(Panel(f"[bold cyan]Scraping Keyword: '{keyword}'[/bold cyan]"))
                 
-                # Add human-like delay between keyword searches
-                time.sleep(random.uniform(2, 5))
+                # Add longer human-like delay between keyword searches to avoid detection
+                time.sleep(random.uniform(15, 25))
                 
                 # Encode search parameters
                 encoded_keyword = urllib.parse.quote(keyword)
@@ -432,8 +432,8 @@ def run_scraper():
                 console.print(f"[blue]{msg_search}[/blue]")
                 try:
                     page.goto(search_url, wait_until="domcontentloaded", timeout=30000)
-                    # Add human-like delay after navigation
-                    time.sleep(random.uniform(1, 3))
+                    # Add longer human-like delay after navigation
+                    time.sleep(random.uniform(5, 10))
                 except Exception as goto_err:
                     logger.warning(f"page.goto timeout/warning: {goto_err}")
                 
@@ -464,9 +464,9 @@ def run_scraper():
                 keyword_lead_count = 0
                 
                 for step in range(SCROLL_STEPS):
-                    # Add human-like delay between scroll steps
+                    # Add longer human-like delay between scroll steps
                     if step > 0:
-                        time.sleep(random.uniform(1, 2))
+                        time.sleep(random.uniform(3, 6))
                     
                     # Step 1: Expand all "see more" buttons currently visible
                     try:
