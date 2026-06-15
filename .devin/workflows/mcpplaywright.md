@@ -252,3 +252,104 @@ Job posts are saved to `pipeline.md` in markdown format with the following struc
 ## Integration with Email Automation
 
 After scraping, use the `/email` workflow to send automated emails to the job postings found in pipeline.md.
+
+## Step 5: Clean Up Pipeline
+
+After scraping completes, clean up the pipeline by removing posts without emails and deduplicating entries.
+
+### Option A: Run Individual Cleanup Scripts
+
+```bash
+# Remove posts without email addresses
+python3 remove_no_email.py
+
+# Remove duplicate posts based on normalized URLs
+python3 remove_duplicates.py
+```
+
+### Option B: Run Combined Cleanup (Recommended)
+
+Use the combined cleanup script that performs both operations in one pass with backup:
+
+```python
+import re
+import shutil
+from pathlib import Path
+from urllib.parse import urlparse, parse_qsl, urlencode, urlunparse
+
+pipeline = Path('pipeline.md')
+backup = Path('pipeline.md.bak_before_cleanup')
+shutil.copy2(pipeline, backup)
+
+content = pipeline.read_text(encoding='utf-8')
+header = ''
+body = content
+first_post = content.find('### Post by ')
+if first_post != -1:
+    header = content[:first_post].rstrip()
+    body = content[first_post:]
+
+raw_posts = re.split(r'\n---\n+', body)
+posts = [p.strip() for p in raw_posts if p.strip() and '### Post by ' in p]
+
+def normalize_url(url):
+    url = (url or '').strip().strip('`')
+    if not url:
+        return ''
+    parsed = urlparse(url)
+    query = [(k, v) for k, v in parse_qsl(parsed.query, keep_blank_values=True) if k.lower() not in {'trackingid', 'istracking', 'isjobsearch', 'refid', 'trk'}]
+    path = parsed.path.rstrip('/')
+    return urlunparse((parsed.scheme.lower(), parsed.netloc.lower(), path, '', urlencode(query), ''))
+
+def extract_emails(post):
+    match = re.search(r'- \*\*Parsed Emails\*\*: (.*?)\n', post)
+    if not match:
+        return []
+    value = match.group(1).strip()
+    if not value or value in {'`None`', 'None'}:
+        return []
+    return sorted(set(e.lower() for e in re.findall(r'[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}', value, re.I)))
+
+def extract_url(post):
+    match = re.search(r'- \*\*Post URL\*\*: (.*?)\n', post)
+    return normalize_url(match.group(1)) if match else ''
+
+kept = []
+seen = set()
+removed_no_email = 0
+removed_duplicates = 0
+
+for post in posts:
+    emails = extract_emails(post)
+    if not emails:
+        removed_no_email += 1
+        continue
+    key = (extract_url(post), tuple(emails))
+    if key in seen:
+        removed_duplicates += 1
+        continue
+    seen.add(key)
+    kept.append(post)
+
+new_content = ''
+if header:
+    new_content += header + '\n\n'
+new_content += '\n---\n\n'.join(kept)
+if kept:
+    new_content += '\n'
+
+pipeline.write_text(new_content, encoding='utf-8')
+print(f'Original posts: {len(posts)}')
+print(f'Removed without email: {removed_no_email}')
+print(f'Removed duplicates: {removed_duplicates}')
+print(f'Kept posts: {len(kept)}')
+print(f'Backup: {backup}')
+```
+
+### Cleanup Details
+
+- **Backup**: A backup file `pipeline.md.bak_before_cleanup` is created before any modifications
+- **Normalization**: LinkedIn URLs are normalized by removing tracking parameters (trackingId, isTracking, isJobSearch, refId, trk)
+- **Deduplication**: Posts are deduplicated based on normalized URL + email combination
+- **No-email removal**: Posts without parsed email addresses are removed entirely
+- **Output**: Final pipeline contains only unique posts with valid email addresses
